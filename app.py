@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd
 import io
 import json
 import os
@@ -254,3 +254,4 @@ elif menu == "1. Configuração":
         st.session_state['planilha_modelo'] = arquivo_novo
         st.session_state['estrutura_modelo'] = analisar_modelo_excel(arquivo_novo)
         st.success("Modelo atualizado para esta sessão!")
+
