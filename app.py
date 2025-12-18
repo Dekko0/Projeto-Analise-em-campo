@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import pd
 import io
 import json
 import os
@@ -14,53 +14,76 @@ from datetime import datetime
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Levantamento de Cargas", layout="wide", page_icon="⚡")
 
-# Arquivos e Configurações de Nome
-DB_FILE = "dados_temporarios.json"
 PLANILHA_PADRAO = "Levantamento_Base.xlsx"
 
-# --- LISTA DE RESPONSÁVEIS TÉCNICOS (Edite aqui) ---
-LISTA_TECNICOS = ["Selecione...", "Lívia Aguiar", "Rafael Argolo", "Adelmo Santana", "Outro"]
+# --- CONFIGURAÇÃO DE USUÁRIOS E SENHAS ---
+# Altere as senhas abaixo conforme necessário
+USUARIOS_SENHAS = {
+    "Lívia Aguiar": "livia123",
+    "Rafael Argolo": "rafael123",
+    "Adelmo Santana": "adelmo123",
+    "Admin": "cargas2024"
+}
+LISTA_TECNICOS = ["Selecione..."] + list(USUARIOS_SENHAS.keys())
 
-# --- FUNÇÕES DE PERSISTÊNCIA ---
+# --- FUNÇÕES DE PERSISTÊNCIA INDIVIDUALIZADA ---
+
+def get_user_db_path():
+    if 'usuario_ativo' in st.session_state and st.session_state['usuario_ativo']:
+        nome_limpo = "".join(filter(str.isalnum, st.session_state['usuario_ativo']))
+        return f"dados_{nome_limpo}.json"
+    return None
 
 def salvar_dados_locais(dados):
-    with open(DB_FILE, "w") as f:
-        json.dump(dados, f)
+    path = get_user_db_path()
+    if path:
+        with open(path, "w") as f:
+            json.dump(dados, f)
 
 def carregar_dados_locais():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f:
+    path = get_user_db_path()
+    if path and os.path.exists(path):
+        with open(path, "r") as f:
             return json.load(f)
     return []
 
 def limpar_dados_locais():
-    if os.path.exists(DB_FILE):
-        os.remove(DB_FILE)
+    path = get_user_db_path()
+    if path and os.path.exists(path):
+        os.remove(path)
     st.session_state['db_formularios'] = []
 
-# --- FUNÇÃO DE ENVIO DE EMAIL ---
+# --- MODAL DE CONFIRMAÇÃO DE EXCLUSÃO ---
+
+@st.dialog("Confirmar Exclusão")
+def confirmar_exclusao_dialog(index):
+    item = st.session_state['db_formularios'][index]
+    st.write(f"Tem certeza que deseja excluir o levantamento da UC: **{item['cod_instalacao']}**?")
+    
+    if st.button("Sim, excluir permanentemente", type="primary", use_container_width=True):
+        st.session_state['db_formularios'].pop(index)
+        salvar_dados_locais(st.session_state['db_formularios'])
+        st.success("Item removido!")
+        st.rerun()
+
+# --- FUNÇÕES DE EMAIL E EXCEL ---
 
 def enviar_email(arquivo_buffer, destinatario):
     SMTP_SERVER = "smtp.gmail.com"
     SMTP_PORT = 587
     EMAIL_REMETENTE = "levantamento.poupenergia@gmail.com"
     SENHA_REMETENTE = "kiqplowxqprcugjc" 
-
     try:
         msg = MIMEMultipart()
         msg['From'] = EMAIL_REMETENTE
         msg['To'] = destinatario
-        msg['Subject'] = f"Levantamento de Cargas - {datetime.now().strftime('%d/%m/%Y')}"
-
-        body = "Segue em anexo a planilha de levantamento de cargas atualizada."
-        msg.attach(MIMEText(body, 'plain'))
-
+        msg['Subject'] = f"Levantamento {st.session_state['usuario_ativo']} - {datetime.now().strftime('%d/%m/%Y')}"
+        msg.attach(MIMEText("Segue em anexo a planilha de levantamento.", 'plain'))
         part = MIMEBase('application', 'octet-stream')
         part.set_payload(arquivo_buffer.getvalue())
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f"attachment; filename= levantamento.xlsx")
+        part.add_header('Content-Disposition', 'attachment; filename=levantamento.xlsx')
         msg.attach(part)
-
         server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
         server.starttls()
         server.login(EMAIL_REMETENTE, SENHA_REMETENTE)
@@ -68,37 +91,20 @@ def enviar_email(arquivo_buffer, destinatario):
         server.quit()
         return True
     except Exception as e:
-        st.error(f"Erro ao enviar email: {e}")
+        st.error(f"Erro no e-mail: {e}")
         return False
 
-# --- FUNÇÕES AUXILIARES DE EXCEL ---
-
 def analisar_modelo_excel(file_content):
-    """
-    Identifica colunas e extrai listas suspensas reais do Excel.
-    Aceita tanto bytes quanto o objeto UploadedFile do Streamlit.
-    """
-    # Se receber bytes (do arquivo local), transforma em buffer
-    if isinstance(file_content, bytes):
-        buffer = io.BytesIO(file_content)
-    else:
-        buffer = io.BytesIO(file_content.getvalue())
-        
+    if isinstance(file_content, bytes): buffer = io.BytesIO(file_content)
+    else: buffer = io.BytesIO(file_content.getvalue())
     wb = load_workbook(buffer, data_only=True)
     estrutura = {}
-
     for sheet_name in wb.sheetnames:
         sheet = wb[sheet_name]
         headers = []
         for cell in sheet[1]:
             if cell.value:
-                headers.append({
-                    "nome": str(cell.value),
-                    "col_letter": cell.column_letter,
-                    "tipo": "texto",
-                    "opcoes": []
-                })
-
+                headers.append({"nome": str(cell.value), "col_letter": cell.column_letter, "tipo": "texto", "opcoes": []})
         for dv in sheet.data_validations.dataValidation:
             if dv.type == "list":
                 for ref in str(dv.sqref).split():
@@ -107,119 +113,69 @@ def analisar_modelo_excel(file_content):
                         if h["col_letter"] == col_letter:
                             h["tipo"] = "selecao"
                             formula = dv.formula1
-                            if formula:
-                                if formula.startswith('"') and formula.endswith('"'):
-                                    h["opcoes"] = formula.strip('"').split(',')
-                                elif formula.startswith('='):
-                                    try:
-                                        ref_range = formula.replace('=', '').replace('$', '')
-                                        if '!' in ref_range:
-                                            parts = ref_range.split('!')
-                                            ref_sheet = wb[parts[0].replace("'", "")]
-                                            cells = ref_sheet[parts[1]]
-                                        else:
-                                            cells = sheet[ref_range]
-                                            
-                                        vals = []
-                                        if isinstance(cells, tuple):
-                                            for row in cells:
-                                                for cell_in_row in row:
-                                                    if cell_in_row.value: vals.append(str(cell_in_row.value))
-                                        else:
-                                            if cells.value: vals.append(str(cells.value))
-                                        h["opcoes"] = list(dict.fromkeys(vals))
-                                    except:
-                                        h["opcoes"] = ["Erro na Lista"]
-        
+                            if formula and formula.startswith('"'): h["opcoes"] = formula.strip('"').split(',')
         estrutura[sheet_name] = [{"nome": h["nome"], "tipo": h["tipo"], "opcoes": h["opcoes"]} for h in headers]
     return estrutura
 
-# --- ESTADO DA APLICAÇÃO E CARREGAMENTO INICIAL ---
+# --- LOGIN / IDENTIFICAÇÃO COM SENHA ---
 
-if 'db_formularios' not in st.session_state:
-    st.session_state['db_formularios'] = carregar_dados_locais()
+if 'usuario_ativo' not in st.session_state:
+    st.session_state['usuario_ativo'] = None
 
-if 'planilha_modelo' not in st.session_state:
-    st.session_state['planilha_modelo'] = None
-    st.session_state['estrutura_modelo'] = {}
+if not st.session_state['usuario_ativo']:
+    st.markdown("<h1 style='text-align: center;'>⚡ Sistema de Cargas</h1>", unsafe_allow_html=True)
+    
+    with st.container():
+        col_l, col_c, col_r = st.columns([1, 2, 1])
+        with col_c:
+            st.subheader("🔐 Acesso Restrito")
+            user_input = st.selectbox("Selecione o Técnico", options=LISTA_TECNICOS)
+            password_input = st.text_input("Senha", type="password")
+            
+            if st.button("Entrar", use_container_width=True):
+                if user_input != "Selecione...":
+                    senha_correta = USUARIOS_SENHAS.get(user_input)
+                    if password_input == senha_correta:
+                        st.session_state['usuario_ativo'] = user_input
+                        st.session_state['db_formularios'] = carregar_dados_locais()
+                        st.success("Login realizado!")
+                        st.rerun()
+                    else:
+                        st.error("Senha incorreta. Tente novamente.")
+                else:
+                    st.warning("Selecione um usuário.")
+    st.stop() # Bloqueia o resto do app até logar
 
-# LOGICA DE CARREGAMENTO AUTOMÁTICO DO ARQUIVO LOCAL
-if not st.session_state['planilha_modelo']:
+# --- CARREGAMENTO DO MODELO AUTOMÁTICO ---
+
+if 'planilha_modelo' not in st.session_state or st.session_state['planilha_modelo'] is None:
     if os.path.exists(PLANILHA_PADRAO):
         with open(PLANILHA_PADRAO, "rb") as f:
             content = f.read()
-            # Criamos um objeto que simula o UploadedFile para o restante do código
             st.session_state['planilha_modelo'] = io.BytesIO(content)
             st.session_state['estrutura_modelo'] = analisar_modelo_excel(content)
-            st.session_state['usando_padrao'] = True
-    else:
-        st.session_state['usando_padrao'] = False
 
-def exportar_para_excel():
-    if not st.session_state['planilha_modelo']:
-        return None
-    
-    # Reposiciona o ponteiro do buffer para o início
-    st.session_state['planilha_modelo'].seek(0)
-    book = load_workbook(st.session_state['planilha_modelo'])
+# --- INTERFACE PRINCIPAL ---
 
-    for registro in st.session_state['db_formularios']:
-        tipo_equipamento = registro['tipo_equipamento']
-        if tipo_equipamento in book.sheetnames:
-            sheet = book[tipo_equipamento]
-            colunas_excel = [cell.value for cell in sheet[1]]
-            nova_linha = []
-            for col_nome in colunas_excel:
-                valor = registro['dados'].get(col_nome, "")
-                nova_linha.append(valor)
-            sheet.append(nova_linha)
+st.sidebar.title(f"👤 {st.session_state['usuario_ativo']}")
+if st.sidebar.button("Sair / Trocar Usuário"):
+    st.session_state['usuario_ativo'] = None
+    st.rerun()
 
-    output = io.BytesIO()
-    book.save(output)
-    output.seek(0)
-    return output
-
-# --- INTERFACE ---
-
-st.title("⚡ Sistema de Levantamento de Cargas")
-
-menu = st.sidebar.radio("Navegação", ["1. Configuração (Admin)", "2. Preenchimento (Técnico)", "3. Exportar & Finalizar"])
-
-# MÓDULO 1: CONFIGURAÇÃO
-if menu == "1. Configuração (Admin)":
-    st.header("📂 Configuração do Modelo")
-    
-    if st.session_state.get('usando_padrao'):
-        st.info(f"✅ O arquivo padrão **'{PLANILHA_PADRAO}'** foi carregado automaticamente.")
-    
-    st.markdown("---")
-    st.subheader("Deseja trocar o modelo?")
-    arquivo_novo = st.file_uploader("Carregar Nova Planilha Modelo (.xlsx)", type=["xlsx"])
-    
-    if arquivo_novo:
-        st.session_state['planilha_modelo'] = arquivo_novo
-        st.session_state['estrutura_modelo'] = analisar_modelo_excel(arquivo_novo)
-        st.session_state['usando_padrao'] = False
-        st.success("Novo modelo carregado com sucesso!")
+menu = st.sidebar.radio("Navegação", ["1. Configuração", "2. Preenchimento", "3. Exportar & Listar"])
 
 # MÓDULO 2: PREENCHIMENTO
-elif menu == "2. Preenchimento (Técnico)":
+if menu == "2. Preenchimento":
     st.header("📝 Novo Levantamento")
-    if not st.session_state['estrutura_modelo']:
-        st.warning("Nenhum modelo detectado. Por favor, adicione o arquivo 'Levantamento_Base.xlsx' na pasta ou faça o upload.")
-    else:
-        col1, col2 = st.columns(2)
-        cod_instalacao = col1.text_input("Código de Instalação (UC)")
-        
-        # LISTA SUSPENSA PARA RESPONSÁVEL TÉCNICO
-        responsavel = col2.selectbox("Responsável Técnico", options=LISTA_TECNICOS)
-        
-        opcoes_abas = list(st.session_state['estrutura_modelo'].keys())
-        tipo_equipamento = st.selectbox("Tipo de Equipamento", options=opcoes_abas)
+    col1, col2 = st.columns(2)
+    cod_instalacao = col1.text_input("Código de Instalação (UC)")
+    
+    opcoes_abas = list(st.session_state.get('estrutura_modelo', {}).keys())
+    tipo_equipamento = st.selectbox("Tipo de Equipamento", options=opcoes_abas)
 
+    if tipo_equipamento:
         campos = st.session_state['estrutura_modelo'][tipo_equipamento]
         respostas = {}
-        
         with st.form("form_tecnico"):
             cols = st.columns(2)
             for i, campo in enumerate(campos):
@@ -229,52 +185,72 @@ elif menu == "2. Preenchimento (Técnico)":
                 else:
                     respostas[campo['nome']] = col_atual.text_input(campo['nome'])
             
-            if st.form_submit_button("➕ Adicionar Equipamento"):
-                if cod_instalacao and responsavel != "Selecione...":
+            if st.form_submit_button("➕ Salvar Equipamento"):
+                if cod_instalacao:
                     novo = {
                         "cod_instalacao": cod_instalacao,
                         "tipo_equipamento": tipo_equipamento,
-                        "responsavel": responsavel,
+                        "responsavel": st.session_state['usuario_ativo'],
                         "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
                         "dados": respostas
                     }
                     st.session_state['db_formularios'].append(novo)
                     salvar_dados_locais(st.session_state['db_formularios'])
-                    st.success("Equipamento registrado!")
+                    st.success("Salvo com sucesso!")
                 else:
-                    st.error("Preencha a UC e selecione um Responsável Técnico.")
+                    st.error("Informe a UC.")
 
-        if st.session_state['db_formularios']:
-            st.divider()
-            st.dataframe(pd.DataFrame(st.session_state['db_formularios'])[['cod_instalacao', 'tipo_equipamento', 'responsavel', 'data_hora']])
-
-# MÓDULO 3: EXPORTAR E FINALIZAR
-elif menu == "3. Exportar & Finalizar":
-    st.header("💾 Exportar e Enviar Dados")
+# MÓDULO 3: EXPORTAR E EXCLUIR
+elif menu == "3. Exportar & Listar":
+    st.header("📋 Itens Levantados por Você")
     
     if not st.session_state['db_formularios']:
-        st.info("Nenhum dado pendente para exportação.")
+        st.info("Sua lista está vazia.")
     else:
-        excel_final = exportar_para_excel()
+        for idx, item in enumerate(st.session_state['db_formularios']):
+            with st.container(border=True):
+                c1, c2, c3 = st.columns([3, 3, 1])
+                c1.write(f"**UC:** {item['cod_instalacao']}")
+                c2.write(f"**Equipamento:** {item['tipo_equipamento']}")
+                if c3.button("🗑️", key=f"del_{idx}"):
+                    confirmar_exclusao_dialog(idx)
+        
+        st.divider()
+        st.subheader("Gerar Relatório")
+        
         col_down, col_mail = st.columns(2)
         
-        with col_down:
-            st.subheader("Download Local")
-            st.download_button("⬇️ Baixar Planilha (.xlsx)", data=excel_final, file_name=f"levantamento_{datetime.now().strftime('%d_%m_%H%M')}.xlsx")
-        
-        with col_mail:
-            st.subheader("Enviar por E-mail")
-            email_dest = st.text_input("E-mail do destinatário")
-            if st.button("📧 Enviar Planilha"):
-                if email_dest:
-                    with st.spinner("Enviando..."):
-                        if enviar_email(excel_final, email_dest):
-                            st.success("E-mail enviado!")
-                else:
-                    st.warning("Informe o e-mail.")
+        def exportar_para_excel():
+            st.session_state['planilha_modelo'].seek(0)
+            book = load_workbook(st.session_state['planilha_modelo'])
+            for registro in st.session_state['db_formularios']:
+                if registro['tipo_equipamento'] in book.sheetnames:
+                    sheet = book[registro['tipo_equipamento']]
+                    colunas_excel = [cell.value for cell in sheet[1]]
+                    nova_linha = [registro['dados'].get(col, "") for col in colunas_excel]
+                    sheet.append(nova_linha)
+            out = io.BytesIO()
+            book.save(out)
+            return out
 
-        st.divider()
-        if st.button("⚠️ FINALIZAR E APAGAR TUDO"):
+        excel_final = exportar_para_excel()
+        col_down.download_button("⬇️ Baixar Sua Planilha", data=excel_final, file_name=f"levantamento_{st.session_state['usuario_ativo']}.xlsx")
+        
+        email_dest = col_mail.text_input("E-mail do Destinatário")
+        if col_mail.button("📧 Enviar por E-mail"):
+            if email_dest and enviar_email(excel_final, email_dest):
+                st.success("Planilha enviada com sucesso!")
+
+        if st.button("⚠️ LIMPAR MEUS DADOS LOCALMENTE", use_container_width=True):
             limpar_dados_locais()
-            st.success("Sistema resetado.")
             st.rerun()
+
+# MÓDULO 1: CONFIGURAÇÃO
+elif menu == "1. Configuração":
+    st.header("📂 Configuração do Sistema")
+    st.write(f"Modelo atual em uso: **{PLANILHA_PADRAO}**")
+    arquivo_novo = st.file_uploader("Substituir planilha modelo temporariamente (.xlsx)", type=["xlsx"])
+    if arquivo_novo:
+        st.session_state['planilha_modelo'] = arquivo_novo
+        st.session_state['estrutura_modelo'] = analisar_modelo_excel(arquivo_novo)
+        st.success("Modelo atualizado para esta sessão!")
