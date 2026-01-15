@@ -55,4 +55,51 @@ def excluir_usuario(nome_usuario):
         return True
     return False
 
-# ... (Função alterar_senha e tela_login continuam iguais) ...
+# --- ADICIONE ISSO AO FINAL DO ARQUIVO auth.py ---
+
+def alterar_senha(usuario, senha_atual, nova_senha):
+    users = carregar_usuarios()
+    hash_armazenado = users.get(usuario)
+    
+    # Verifica se a senha atual está correta
+    valido, _ = verificar_senha(senha_atual, hash_armazenado)
+    
+    if valido:
+        # Atualiza com a nova senha hashada
+        users[usuario] = hash_senha(nova_senha)
+        salvar_usuarios(users)
+        return True
+    return False
+
+def tela_login():
+    # Cria uma coluna centralizada para ficar visualmente melhor
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("## 🔐 Acesso ao Sistema")
+        with st.form(key="login_form"):
+            usuario = st.text_input("Usuário")
+            senha = st.text_input("Senha", type="password")
+            
+            submit = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+            
+            if submit:
+                users_db = carregar_usuarios()
+                hash_armazenado = users_db.get(usuario)
+                
+                if hash_armazenado:
+                    valido, precisa_rehash = verificar_senha(senha, hash_armazenado)
+                    if valido:
+                        st.success(f"Bem-vindo, {usuario}!")
+                        st.session_state['usuario_ativo'] = usuario
+                        
+                        # Se for senha antiga (texto plano), atualiza para hash agora
+                        if precisa_rehash:
+                            users_db[usuario] = hash_senha(senha)
+                            salvar_usuarios(users_db)
+                            
+                        st.rerun()
+                    else:
+                        st.error("Senha incorreta.")
+                else:
+                    st.error("Usuário não encontrado.")
