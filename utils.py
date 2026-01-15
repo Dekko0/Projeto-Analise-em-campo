@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 # Constantes
 PLANILHA_PADRAO_ADMIN = "Levantamento_Base.xlsx"
 
-# --- DATAS E CAMINHOS ---
+# DATAS E CAMINHOS
 def get_data_hora_br():
     fuso_br = timezone(timedelta(hours=-3))
     return datetime.now(fuso_br)
@@ -33,7 +33,7 @@ def get_user_template_path(nome_usuario=None):
         return f"template_{nome_limpo}.xlsx"
     return None
 
-# --- PERSISTÊNCIA JSON ---
+# PERSISTÊNCIA JSON
 def salvar_dados_locais(dados):
     path = get_user_data_path()
     if path:
@@ -45,7 +45,7 @@ def carregar_dados_locais(path_especifico=None):
         with open(path, "r") as f: return json.load(f)
     return []
 
-# --- LÓGICA EXCEL ---
+# LÓGICA EXCEL 
 def analisar_modelo_excel(file_content):
     try:
         buffer = io.BytesIO(file_content) if isinstance(file_content, bytes) else io.BytesIO(file_content.getvalue())
@@ -103,7 +103,7 @@ def exportar_para_excel(dados_lista):
     output.seek(0)
     return output
 
-# --- EMAIL ---
+# EMAIL
 def enviar_email(arquivo_buffer, destinatario):
     try:
         msg = MIMEMultipart()
