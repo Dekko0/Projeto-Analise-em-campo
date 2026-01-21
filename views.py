@@ -11,8 +11,8 @@ def section_title(icon, text):
     """Renderiza um título de seção com espaçamento e estilo corporativo."""
     st.markdown(f"""
     <div style="margin-top: 20px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-        <span class='material-symbols-outlined' style='font-size: 24px; color: #444;'>{icon}</span>
-        <span style='font-size: 18px; font-weight: 600; color: #333;'>{text}</span>
+        <span class='material-symbols-outlined' style='font-size: 24px; color: #fafafa;'>{icon}</span>
+        <span style='font-size: 18px; font-weight: 600; color: #fafafa;'>{text}</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -589,3 +589,4 @@ def render_admin_panel():
             if mestre:
                 with open(utils.PLANILHA_PADRAO_ADMIN, "wb") as f: f.write(mestre.getbuffer())
                 st.success("Modelo Padrão atualizado com sucesso!")
+
